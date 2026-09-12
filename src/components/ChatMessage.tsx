@@ -16,6 +16,8 @@ import {
   User,
 } from 'lucide-react';
 import { Message, DocCitation } from '../types';
+import { InstallationChecklist } from './InstallationChecklist';
+import { VersionCompareMatrix } from './VersionCompareMatrix';
 
 interface ChatMessageProps {
   message: Message;
@@ -47,6 +49,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     if (isSpeakingThis) {
       onStopSpeaking();
     } else {
+      voiceService.primeAudio();
       const textToSpeak = message.spokenText || message.content;
       onSpeak(textToSpeak, message.audioBase64);
     }
@@ -144,12 +147,63 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 h1: ({ node, ...props }) => <h1 className="text-lg font-bold text-white mt-3 mb-1" {...props} />,
                 h2: ({ node, ...props }) => <h2 className="text-base font-semibold text-white mt-3 mb-1" {...props} />,
                 h3: ({ node, ...props }) => <h3 className="text-sm font-semibold text-cyan-200 mt-2 mb-1" {...props} />,
-                code: ({ node, ...props }) => (
-                  <code className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-xs" {...props} />
-                ),
-                pre: ({ node, ...props }) => (
-                  <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs overflow-x-auto text-cyan-200 my-2" {...props} />
-                ),
+                code: ({ node, className, children, ...props }: any) => {
+                  const match = /language-(\w+)/.exec(className || '');
+                  const lang = match ? match[1] : '';
+                  const content = String(children).replace(/\n$/, '');
+
+                  if (lang === 'checklist') {
+                    try {
+                      const data = JSON.parse(content);
+                      return <InstallationChecklist productTitle={data.productTitle} steps={data.steps} />;
+                    } catch (e) {
+                      console.warn('Failed to parse checklist block', e);
+                    }
+                  }
+
+                  if (lang === 'matrix') {
+                    try {
+                      const data = JSON.parse(content);
+                      return (
+                        <VersionCompareMatrix
+                          product={data.product}
+                          oldVersion={data.oldVersion}
+                          newVersion={data.newVersion}
+                          comparisons={data.comparisons}
+                        />
+                      );
+                    } catch (e) {
+                      console.warn('Failed to parse matrix block', e);
+                    }
+                  }
+
+                  const isInline = !className && !String(children).includes('\n');
+                  if (isInline) {
+                    return (
+                      <code className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-xs" {...props}>
+                        {children}
+                      </code>
+                    );
+                  }
+
+                  return (
+                    <code className={`block text-xs font-mono text-cyan-200 ${className || ''}`} {...props}>
+                      {children}
+                    </code>
+                  );
+                },
+                pre: ({ node, children, ...props }: any) => {
+                  const firstChild = React.Children.toArray(children)[0] as any;
+                  const className = firstChild?.props?.className || '';
+                  if (className.includes('language-checklist') || className.includes('language-matrix')) {
+                    return <div>{children}</div>;
+                  }
+                  return (
+                    <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-xs overflow-x-auto text-cyan-200 my-2" {...props}>
+                      {children}
+                    </pre>
+                  );
+                },
               }}
             >
               {message.content}
