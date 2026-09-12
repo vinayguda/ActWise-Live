@@ -23,6 +23,8 @@ import { StatusIndicator } from './components/StatusIndicator';
 import { ChatMessage } from './components/ChatMessage';
 import { McpInspectorModal } from './components/McpInspectorModal';
 import { VoiceSettingsDrawer } from './components/VoiceSettingsDrawer';
+import { SubmissionModal } from './components/SubmissionModal';
+import { Award } from 'lucide-react';
 
 const QUICK_PROMPTS = [
   { label: 'What is ActOne?', query: 'What is ActOne?' },
@@ -70,6 +72,7 @@ export default function App() {
   const [mcpHealth, setMcpHealth] = useState<McpHealthInfo | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSubmissionOpen, setIsSubmissionOpen] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
 
   const [settings, setSettings] = useState<VoiceSettings>({
@@ -411,6 +414,16 @@ export default function App() {
             </span>
           </button>
 
+          {/* Hackathon Submission Package */}
+          <button
+            onClick={() => setIsSubmissionOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-xs font-semibold text-white shadow-md transition-all cursor-pointer"
+            title="Export Hackathon Submission Package"
+          >
+            <Award className="w-4 h-4" />
+            <span className="hidden sm:inline">Submission Package</span>
+          </button>
+
           {/* Voice Settings */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -562,6 +575,14 @@ export default function App() {
         onUpdateSettings={(newVals) => setSettings((prev) => ({ ...prev, ...newVals }))}
         voices={voiceService.getVoices()}
       />
+
+      {/* Hackathon Submission Package Modal */}
+      <SubmissionModal
+        isOpen={isSubmissionOpen}
+        onClose={() => setIsSubmissionOpen(false)}
+        cloudRunUrl="https://actwise-live-218423701961.us-central1.run.app"
+      />
     </div>
   );
 }
+
