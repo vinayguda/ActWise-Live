@@ -49,13 +49,15 @@ export async function generateGeminiSpeech(
   }
 
   try {
-    const ai = new GoogleGenAI();
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+    const ai = new GoogleGenAI({ apiKey });
     // Valid voice names for Gemini TTS: 'Aoede', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
     const validVoices = ['Aoede', 'Zephyr', 'Puck', 'Kore', 'Charon', 'Fenrir'];
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Aoede';
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
+      model: 'gemini-2.5-flash',
+
       contents: [{ parts: [{ text }] }],
       config: {
         responseModalities: [Modality.AUDIO],

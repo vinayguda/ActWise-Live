@@ -164,8 +164,9 @@ export async function runActWiseAgent(
   const mcpCalls: McpToolCallResult[] = [];
   const citations: Array<{ title: string; url: string; bundle?: string; snippet?: string }> = [];
 
-  const ai = new GoogleGenAI();
-  const modelsToTry = ['gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-3.8-flash'];
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  const ai = new GoogleGenAI({ apiKey });
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-flash'];
 
   onProgress?.({
     type: 'status',
