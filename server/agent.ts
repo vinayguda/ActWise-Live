@@ -57,16 +57,16 @@ Copy portal_url exactly. Never modify or invent URLs.
 
 ## Interactive Visual Enhancements
 - For procedural setup, installation, or multi-step configuration tasks, embed an interactive checklist JSON block using:
-```checklist
+\`\`\`checklist
 {
   "productTitle": "<Product or Procedure Name>",
   "steps": [
     { "id": "step-1", "title": "<Short Step Title>", "detail": "<Actionable instruction>" }
   ]
 }
-```
+\`\`\`
 - For questions comparing versions or releases (e.g., ActOne 10.2 vs 10.1), embed a version comparison matrix JSON block using:
-```matrix
+\`\`\`matrix
 {
   "product": "ActOne",
   "oldVersion": "10.1",
@@ -75,7 +75,7 @@ Copy portal_url exactly. Never modify or invent URLs.
     { "feature": "<Subsystem or Feature>", "verOld": "<Old Behavior>", "verNew": "<New Behavior>", "status": "added"|"enhanced"|"deprecated" }
   ]
 }
-```
+\`\`\`
 `;
 
 const tools: FunctionDeclaration[] = [
