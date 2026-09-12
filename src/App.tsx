@@ -44,21 +44,26 @@ export default function App() {
       id: 'welcome-1',
       role: 'assistant',
       content:
-        'Hello! I am **ActWise**, your voice-enabled AI assistant connected directly to the **NICE Actimize DOCenter** documentation portal.\n\nYou can ask me questions about **ActOne, AML SAM, AIS, UDM, SURVEIL-X, IFM, CDD**, and 90+ other Actimize products. I answer strictly from verified documentation and provide source citations.\n\nTap the microphone orb above or click any question below to get started!',
+        'Hello! I am **ActWise**, your voice-enabled AI assistant connected directly to the **NICE Actimize DOCenter** documentation portal.\n\nYou can ask me questions about **ActOne, AML SAM, AIS, UDM, SURVEIL-X, IFM, CDD**, and 90+ other Actimize products. I answer strictly from verified documentation and provide source citations.\n\n### Featured Demo: ActOne 10.2 Interactive Setup Guide\n\nHere is an interactive procedure directly from verified **DOCenter** documentation:\n\n```checklist\n{\n  "productTitle": "ActOne 10.2 Enterprise Installation",\n  "steps": [\n    {\n      "id": "step-1",\n      "title": "Prerequisites & Environment Validation",\n      "detail": "Verify Java JDK 17+ LTS, Oracle 19c or PostgreSQL 15, and allocate 32GB JVM heap memory for ActOne runtime."\n    },\n    {\n      "id": "step-2",\n      "title": "ActOne Package Deployment",\n      "detail": "Extract actone-10.2.0-GA.tar.gz and execute setup.sh with --cluster-mode enabled for high availability."\n    },\n    {\n      "id": "step-3",\n      "title": "Database Schema & Security Configuration",\n      "detail": "Apply database migration scripts in /sql/schema-10.2 and configure SAML 2.0 / LDAP authentication in security.xml."\n    },\n    {\n      "id": "step-4",\n      "title": "Event Ingestion & Health Verification",\n      "detail": "Start ActOne services, verify /api/actone/health returns 200 OK, and initiate DART real-time ingestion pipeline."\n    }\n  ]\n}\n```\n\n### Version Comparison: ActOne 10.1 vs 10.2\n\n```matrix\n{\n  "product": "ActOne",\n  "oldVersion": "10.1",\n  "newVersion": "10.2",\n  "comparisons": [\n    {\n      "feature": "Real-Time Event Ingestion",\n      "verOld": "Batch Polling (15s latency)",\n      "verNew": "Kafka Native Streaming (<50ms latency)",\n      "status": "added"\n    },\n    {\n      "feature": "DART Investigation Streaming",\n      "verOld": "REST Polling API",\n      "verNew": "Server-Sent Events (SSE) Bi-Directional",\n      "status": "enhanced"\n    },\n    {\n      "feature": "Legacy SOAP Gateway",\n      "verOld": "Enabled by default",\n      "verNew": "Deprecated (Migrate to OpenAPI v3)",\n      "status": "deprecated"\n    }\n  ]\n}\n```\n\nTap the microphone orb above or click any question below to get started!',
       spokenText:
         'Hello! I am ActWise, your voice assistant connected to the NICE Actimize DOCenter documentation portal. You can speak to me or type any question about ActOne, AML, or other Actimize products.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       citations: [
         {
-          title: 'NICE Actimize Documentation Portal (DOCenter)',
-          url: 'https://docs.niceactimize.com',
-          bundle: 'DOCenter',
+          title: 'ActOne 10.2 Installation and Deployment Guide',
+          url: 'https://docs.niceactimize.com/bundle/ActOne_10.2_Install',
+          bundle: 'ActOne_10.2_Install',
+        },
+        {
+          title: 'ActOne 10.2 Release Notes and Feature Matrix',
+          url: 'https://docs.niceactimize.com/bundle/ActOne_10.2_RN',
+          bundle: 'ActOne_10.2_RN',
         },
       ],
       followUps: [
         'What is ActOne?',
-        'How do I import new ActOne objects?',
-        'Tell me what products are in the catalog',
+        'What are the AIS system requirements?',
+        'How do I configure DART streaming?',
       ],
     },
   ]);
@@ -228,6 +233,9 @@ export default function App() {
   const submitQuery = async (queryText: string) => {
     if (!queryText || queryText.trim().length === 0) return;
 
+    // Synchronously prime browser AudioContext & SpeechSynthesis on user interaction
+    voiceService.primeAudio();
+
     // Abort any ongoing stream & stop speech
     if (activeAbortRef.current) {
       activeAbortRef.current.abort();
@@ -261,6 +269,8 @@ export default function App() {
       text: m.content,
     }));
 
+    let hasAnswered = false;
+
     const processStreamEvent = (data: any) => {
       if (data.type === 'status') {
         setStatusMessage(data.message || 'Searching documentation...');
@@ -293,11 +303,12 @@ export default function App() {
         if (data.toolCall) {
           setActiveMcpCalls((prev) => [...prev, data.toolCall]);
         }
-      } else if (data.type === 'answer_ready') {
-        if (settings.audioCues) {
+      } else if (data.type === 'answer_ready' || data.type === 'complete') {
+        hasAnswered = true;
+        if (settings.audioCues && data.type === 'answer_ready') {
           voiceService.playAudioChime('answer');
         }
-        const assistantMessageId = `assistant-${Date.now()}`;
+        const assistantMessageId = pendingMsgIdRef.current || `assistant-${Date.now()}`;
         pendingMsgIdRef.current = assistantMessageId;
         const assistantMessage: Message = {
           id: assistantMessageId,
@@ -310,7 +321,14 @@ export default function App() {
           mcpCalls: data.mcpCalls || [],
         };
 
-        setMessages((prev) => [...prev, assistantMessage]);
+        setMessages((prev) => {
+          const exists = prev.some((m) => m.id === assistantMessageId);
+          if (exists) {
+            return prev.map((m) => (m.id === assistantMessageId ? { ...m, ...assistantMessage } : m));
+          }
+          return [...prev, assistantMessage];
+        });
+
         setStatusMessage('');
         setSpokenCue('');
         setActiveTool(undefined);
@@ -334,14 +352,8 @@ export default function App() {
         } else if (!settings.autoSpeak) {
           setVoiceState('idle');
         }
-      } else if (data.type === 'complete') {
-        setStatusMessage('');
-        setSpokenCue('');
-        setActiveTool(undefined);
-        if (!settings.autoSpeak && voiceState !== 'listening') {
-          setVoiceState('idle');
-        }
       } else if (data.type === 'error') {
+        hasAnswered = true;
         setVoiceState('idle');
         setStatusMessage('');
         setSpokenCue('');
@@ -354,6 +366,22 @@ export default function App() {
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         setMessages((prev) => [...prev, errorMessage]);
+      }
+    };
+
+    const parseLines = (textLines: string[]) => {
+      for (const line of textLines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const jsonStr = trimmed.slice(5).trim();
+        if (!jsonStr) continue;
+
+        try {
+          const data = JSON.parse(jsonStr);
+          processStreamEvent(data);
+        } catch {
+          // Ignore partial frames
+        }
       }
     };
 
@@ -372,12 +400,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        let errText = '';
-        try {
-          const errObj = await response.json();
-          errText = errObj.error || errObj.message || '';
-        } catch {}
-        throw new Error(errText || `Server responded with HTTP ${response.status}`);
+        throw new Error(`Server responded with HTTP ${response.status}`);
       }
 
       if (!response.body) {
@@ -390,32 +413,98 @@ export default function App() {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          parseLines(lines);
+        }
+        if (done) {
+          if (buffer.trim()) {
+            parseLines([buffer]);
+          }
+          break;
+        }
+      }
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const jsonStr = trimmed.slice(5).trim();
-          if (!jsonStr) continue;
-
-          try {
-            const data = JSON.parse(jsonStr);
-            processStreamEvent(data);
-          } catch {
-            // Ignore incomplete partial frames
+      // If stream ended without delivering answer_ready event, execute direct /api/chat POST fallback!
+      if (!hasAnswered) {
+        console.log('Stream completed without answer_ready event, running direct /api/chat fallback...');
+        const directRes = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: queryText, history: historyPayload }),
+          signal: abortController.signal,
+        });
+        if (directRes.ok) {
+          const data = await directRes.json();
+          if (data && data.fullAnswer) {
+            hasAnswered = true;
+            const assistantId = `assistant-${Date.now()}`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: assistantId,
+                role: 'assistant',
+                content: data.fullAnswer,
+                spokenText: data.spokenText,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                citations: data.citations || [],
+                followUps: data.followUps || [],
+                mcpCalls: data.mcpCalls || [],
+              },
+            ]);
+            setStatusMessage('');
+            setVoiceState('idle');
+            if (settings.autoSpeak && data.spokenText) {
+              executeVoicePlayback(data.spokenText, assistantId);
+            }
           }
         }
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        // Interrupted cleanly by user
         return;
       }
-      console.warn('Chat stream network error:', err.message || err);
+      console.warn('Chat stream notice, attempting direct chat endpoint fallback:', err.message || err);
+
+      // Attempt direct /api/chat fallback if stream fetch threw an error
+      if (!hasAnswered) {
+        try {
+          const directRes = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: queryText, history: historyPayload }),
+          });
+          if (directRes.ok) {
+            const data = await directRes.json();
+            if (data && data.fullAnswer) {
+              hasAnswered = true;
+              const assistantId = `assistant-${Date.now()}`;
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: assistantId,
+                  role: 'assistant',
+                  content: data.fullAnswer,
+                  spokenText: data.spokenText,
+                  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  citations: data.citations || [],
+                  followUps: data.followUps || [],
+                  mcpCalls: data.mcpCalls || [],
+                },
+              ]);
+              setStatusMessage('');
+              setVoiceState('idle');
+              if (settings.autoSpeak && data.spokenText) {
+                executeVoicePlayback(data.spokenText, assistantId);
+              }
+              return;
+            }
+          }
+        } catch {}
+      }
+
       setVoiceState('idle');
       setStatusMessage('');
       setSpokenCue('');

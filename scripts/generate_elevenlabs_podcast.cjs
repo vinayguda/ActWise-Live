@@ -1,7 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-
-const apiKey = process.env.ELEVENLABS_API_KEY || 'sk_e8f7076edd2e3fea57ba3f1025d25e7b9d89fdfa5c0a5406';
+const apiKey = process.env.ELEVENLABS_API_KEY || '';
+if (!apiKey) {
+  console.error('Missing ELEVENLABS_API_KEY environment variable.');
+  process.exit(1);
+}
 
 const dialogue = [
   {

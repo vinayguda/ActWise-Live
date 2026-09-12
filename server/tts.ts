@@ -82,7 +82,7 @@ export async function generateGeminiSpeech(
     const chosenVoice = validVoices.includes(voiceName) ? voiceName : 'Aoede';
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
+      model: 'gemini-2.5-flash',
       contents: [{ parts: [{ text: cleanText.slice(0, 800) }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -122,13 +122,12 @@ export async function generateGeminiSpeech(
   } catch (err: any) {
     const isQuota = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('quota');
     if (isQuota) {
-      // Set cooldown for 60 seconds to avoid repeating failed network calls
       ttsQuotaCooldownUntil = Date.now() + 60000;
-      console.warn('Gemini TTS daily quota limit reached on free tier. Gracefully falling back to client audio.');
+      console.warn('Gemini TTS quota limit reached. Falling back to browser audio.');
       return { audioBase64: null, mimeType: 'audio/wav', quotaExhausted: true };
     }
-    console.warn('Gemini TTS generation error, falling back:', err.message);
-    return null;
+    console.warn('Gemini TTS unavailable, falling back to browser speech:', err?.message || err);
+    return { audioBase64: null, mimeType: 'audio/wav', quotaExhausted: false };
   }
 }
 

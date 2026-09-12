@@ -170,8 +170,8 @@ export async function runActWiseAgent(
   const ai = new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
   });
-  // Use currently supported models. (Note: gemini-2.5-flash is discontinued/404)
-  const modelsToTry = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  // Use official working Gemini models
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-3.6-flash'];
 
   onProgress?.({
     type: 'status',

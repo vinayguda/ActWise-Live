@@ -80,6 +80,27 @@ export class VoiceService {
   }
 
   /**
+   * Unlocks/primes browser AudioContext and SpeechSynthesis on user click/tap.
+   */
+  public primeAudio(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      const ctx = this.getOrCreateAudioContext();
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.resume();
+        if (!window.speechSynthesis.speaking) {
+          const dummy = new SpeechSynthesisUtterance('');
+          dummy.volume = 0;
+          window.speechSynthesis.speak(dummy);
+        }
+      }
+    } catch {}
+  }
+
+  /**
    * Plays a lightweight, instantaneous acoustic chime for user cues.
    * Zero network latency, synthesized via Web Audio API.
    */
@@ -224,6 +245,13 @@ export class VoiceService {
     // Stop any existing voice immediately
     this.stopSpeaking();
 
+    if (!audioBase64 || typeof audioBase64 !== 'string' || audioBase64.length < 50) {
+      console.warn('Invalid audio base64 payload provided to playNaturalVoice');
+      options.onError?.('Invalid audio data');
+      options.onEnd?.();
+      return;
+    }
+
     try {
       const audioUrl = `data:audio/wav;base64,${audioBase64}`;
       const audio = new Audio(audioUrl);
@@ -317,6 +345,10 @@ export class VoiceService {
     }
 
     this.stopSpeaking();
+
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.resume();
+    }
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = (options.rate || 1.0) * 1.05; // Slightly swifter for nimble delivery

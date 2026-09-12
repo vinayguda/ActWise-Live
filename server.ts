@@ -10,9 +10,45 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  app.use(express.json());
+  function safeJsonParse(rawBody: string): any {
+    try {
+      return JSON.parse(rawBody);
+    } catch (err) {
+      const fixed = rawBody.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+      try {
+        return JSON.parse(fixed);
+      } catch {
+        throw err;
+      }
+    }
+  }
+
+  // Raw text middleware to safely parse incoming JSON even with unescaped backslashes
+  app.use(express.text({ type: ['application/json', 'text/plain', 'application/x-www-form-urlencoded', '*/*'], limit: '10mb' }));
+
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (typeof req.body === 'string' && req.body.trim()) {
+      try {
+        req.body = safeJsonParse(req.body);
+      } catch (e: any) {
+        console.warn('Failed to parse request body string:', e?.message || e);
+        req.body = {};
+      }
+    } else if (!req.body) {
+      req.body = {};
+    }
+    next();
+  });
+
+  // Request logger
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.url.startsWith('/api')) {
+      console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+    }
+    next();
+  });
 
   // Basic health check
   app.get('/api/health', (req, res) => {
@@ -56,7 +92,8 @@ async function startServer() {
 
   // Standard chat endpoint
   app.post('/api/chat', async (req, res) => {
-    const { message, history } = req.body;
+    const message = (req.body?.message || req.body?.q || req.query?.message || req.query?.q) as string;
+    const history = req.body?.history;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ error: 'Message is required' });
       return;
@@ -100,7 +137,7 @@ async function startServer() {
 
   // Live SSE streaming chat endpoint with real-time status and tool call telemetry
   const handleChatStream = async (req: express.Request, res: express.Response) => {
-    const query = ((req.body?.q || req.query.q) as string) || '';
+    const query = ((req.body?.q || req.body?.message || req.query.q || req.query.message) as string) || '';
     const historyParam = req.body?.history ?? req.query.history;
     const requestedVoice = ((req.body?.voice || req.query.voice) as string) || 'Aoede';
 
@@ -127,14 +164,25 @@ async function startServer() {
     res.flushHeaders();
 
     let clientDisconnected = false;
+    const heartbeatTimer = setInterval(() => {
+      if (!clientDisconnected && !res.writableEnded) {
+        try {
+          res.write(': heartbeat\n\n');
+          if (typeof (res as any).flush === 'function') (res as any).flush();
+        } catch {}
+      }
+    }, 10000);
+
     req.on('close', () => {
       clientDisconnected = true;
+      clearInterval(heartbeatTimer);
     });
 
     const sendEvent = (event: any) => {
       if (clientDisconnected || res.writableEnded) return;
       try {
         res.write(`data: ${JSON.stringify(event)}\n\n`);
+        if (typeof (res as any).flush === 'function') (res as any).flush();
       } catch (err) {
         // stream write failed
       }
@@ -150,7 +198,10 @@ async function startServer() {
         requestedVoice
       );
 
-      if (clientDisconnected || res.writableEnded) return;
+      if (clientDisconnected || res.writableEnded) {
+        clearInterval(heartbeatTimer);
+        return;
+      }
 
       // 1. Send the text answer IMMEDIATELY so the client renders full formatted markdown and citations in under 1s
       sendEvent({
@@ -169,22 +220,32 @@ async function startServer() {
           type: 'status',
           message: 'Synthesizing voice...',
         });
-        const speech = await generateGeminiSpeech(finalResult.spokenText, requestedVoice);
-        if (speech?.audioBase64) {
-          audioBase64 = speech.audioBase64;
-          sendEvent({
-            type: 'audio_ready',
-            audioBase64,
-            spokenText: finalResult.spokenText,
-            fallbackToBrowser: false,
-          });
-        } else {
+        try {
+          const speech = await generateGeminiSpeech(finalResult.spokenText, requestedVoice);
+          if (speech?.audioBase64) {
+            audioBase64 = speech.audioBase64;
+            sendEvent({
+              type: 'audio_ready',
+              audioBase64,
+              spokenText: finalResult.spokenText,
+              fallbackToBrowser: false,
+            });
+          } else {
+            sendEvent({
+              type: 'audio_ready',
+              audioBase64: null,
+              spokenText: finalResult.spokenText,
+              fallbackToBrowser: true,
+              quotaExhausted: !!speech?.quotaExhausted,
+            });
+          }
+        } catch (ttsErr: any) {
+          console.warn('Voice synthesis error (using browser speech):', ttsErr?.message || ttsErr);
           sendEvent({
             type: 'audio_ready',
             audioBase64: null,
             spokenText: finalResult.spokenText,
             fallbackToBrowser: true,
-            quotaExhausted: !!speech?.quotaExhausted,
           });
         }
       }
@@ -210,11 +271,18 @@ async function startServer() {
         });
         res.end();
       }
+    } finally {
+      clearInterval(heartbeatTimer);
     }
   };
 
   app.get('/api/chat/stream', handleChatStream);
   app.post('/api/chat/stream', handleChatStream);
+
+  // Catch any unhandled /api/* route so it NEVER falls through to index.html
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API endpoint ${req.method} ${req.url} not found` });
+  });
 
   // Vite middleware in dev, static files in production
   if (process.env.NODE_ENV !== 'production') {
