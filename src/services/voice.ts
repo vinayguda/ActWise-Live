@@ -80,6 +80,86 @@ export class VoiceService {
   }
 
   /**
+   * Plays a lightweight, instantaneous acoustic chime for user cues.
+   * Zero network latency, synthesized via Web Audio API.
+   */
+  public playAudioChime(type: 'cue' | 'mic_open' | 'mic_close' | 'tool_end' | 'answer' = 'cue'): void {
+    try {
+      const ctx = this.getOrCreateAudioContext();
+      if (!ctx) return;
+
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'cue') {
+        // High-tech subtle dual-tone chime: 587.33Hz (D5) -> 880Hz (A5)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, now);
+        osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      } else if (type === 'mic_open') {
+        // Rising notification tone
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, now);
+        osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.08);
+        gain.gain.setValueAtTime(0.08, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        osc.start(now);
+        osc.stop(now + 0.12);
+      } else if (type === 'mic_close') {
+        // Falling confirmation tone
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(659.25, now);
+        osc.frequency.exponentialRampToValueAtTime(440, now + 0.08);
+        gain.gain.setValueAtTime(0.06, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+        osc.start(now);
+        osc.stop(now + 0.11);
+      } else if (type === 'tool_end') {
+        // Soft positive blip
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(523.25, now);
+        osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.07);
+        gain.gain.setValueAtTime(0.05, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        osc.start(now);
+        osc.stop(now + 0.14);
+      } else if (type === 'answer') {
+        // Subtle arrival tone
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(523.25, now);
+        osc.frequency.setValueAtTime(659.25, now + 0.06);
+        osc.frequency.setValueAtTime(783.99, now + 0.12);
+        gain.gain.setValueAtTime(0.05, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+        osc.start(now);
+        osc.stop(now + 0.2);
+      }
+    } catch {
+      // Ignore audio context errors before user interaction
+    }
+  }
+
+  /**
+   * Play natural spoken cue audio or pleasant acoustic chime.
+   * Completely avoids robotic browser synthesis so the voice is 100% natural and consistent.
+   */
+  public playSpokenCue(cueAudioBase64?: string, rate: number = 1.05): void {
+    if (cueAudioBase64) {
+      this.playNaturalVoice(cueAudioBase64, { rate });
+    } else {
+      this.playAudioChime('cue');
+    }
+  }
+
+  /**
    * Starts microphone input frequency analysis for the visualizer orb.
    */
   public async startAudioAnalysis(onVolumeChange?: (volume: number) => void): Promise<void> {
@@ -361,14 +441,15 @@ export class VoiceService {
       if (currentText) {
         callbacks.onInterim?.(currentText);
 
-        // Reset silence detection timer: 1.4s of silence triggers sending (nimble & responsive)
+        // Reset silence detection timer: 850ms of silence triggers instant sending (fast & nimble)
         if (silenceTimer) clearTimeout(silenceTimer);
         silenceTimer = setTimeout(() => {
           if (currentText.length > 0 && this.isRecognizing) {
             this.stopListening();
+            this.playAudioChime('mic_close');
             callbacks.onFinal?.(currentText);
           }
-        }, 1400);
+        }, 850);
       }
     };
 
@@ -387,6 +468,7 @@ export class VoiceService {
 
     try {
       this.isRecognizing = true;
+      this.playAudioChime('mic_open');
       this.recognition.start();
     } catch (e: any) {
       this.isRecognizing = false;

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { X, Sliders, Sparkles, Volume2, Mic, Play, Square } from 'lucide-react';
+import { X, Sliders, Sparkles, Volume2, Mic, Play, Square, Music } from 'lucide-react';
 import { VoiceSettings } from '../types';
 import { voiceService } from '../services/voice';
+import { ambientMusicService } from '../services/ambientMusic';
 
 interface VoiceSettingsDrawerProps {
   isOpen: boolean;
@@ -28,6 +29,16 @@ export const VoiceSettingsDrawer: React.FC<VoiceSettingsDrawerProps> = ({
   voices,
 }) => {
   const [testingVoice, setTestingVoice] = useState(false);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(ambientMusicService.isPlaying());
+  const [musicVolume, setMusicVolume] = useState(ambientMusicService.getVolume());
+
+  React.useEffect(() => {
+    const unsub = ambientMusicService.addListener((playing, vol) => {
+      setIsMusicPlaying(playing);
+      setMusicVolume(vol);
+    });
+    return unsub;
+  }, []);
 
   if (!isOpen) return null;
 
@@ -220,6 +231,68 @@ export const VoiceSettingsDrawer: React.FC<VoiceSettingsDrawerProps> = ({
               />
               <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
             </label>
+          </div>
+
+          {/* Tool Calling Acoustic & Spoken Cues */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950/60 border border-slate-800">
+            <div>
+              <div className="font-semibold text-slate-200">Natural Tool Calling Cues</div>
+              <div className="text-slate-400 text-[11px] mt-0.5">
+                Announces tool progress in the exact same natural studio voice (or harmonic chimes).
+              </div>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.audioCues ?? true}
+                onChange={(e) => onUpdateSettings({ audioCues: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+            </label>
+          </div>
+
+          {/* Light Ambient Background Music */}
+          <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+                  <Music className="w-4 h-4 text-cyan-400" />
+                  <span>Ambient Background Music</span>
+                </div>
+                <div className="text-slate-400 text-[11px] mt-0.5">
+                  Relaxing, low-fi studio soundscape with smart auto-ducking when speaking.
+                </div>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isMusicPlaying}
+                  onChange={() => {
+                    ambientMusicService.toggle();
+                  }}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-600"></div>
+              </label>
+            </div>
+            {isMusicPlaying && (
+              <div className="pt-2 border-t border-slate-800/80">
+                <div className="flex justify-between text-xs text-slate-300 mb-1">
+                  <span>Music Volume</span>
+                  <span className="font-mono text-cyan-300">{Math.round(musicVolume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.05"
+                  max="0.6"
+                  step="0.05"
+                  value={musicVolume}
+                  onChange={(e) => ambientMusicService.setVolume(parseFloat(e.target.value))}
+                  className="w-full accent-cyan-500 cursor-pointer"
+                />
+              </div>
+            )}
           </div>
 
           {/* Speech Rate */}

@@ -54,28 +54,6 @@ Copy portal_url exactly. Never modify or invent URLs.
   1. The written response on screen should be thorough and complete with step-by-step procedures, technical details, code snippets, and exact markdown links [Title](url).
   2. The spoken response will be converted to real human voice audio. Keep the spoken summary quick (1 to 2 punchy, friendly sentences) and invite the user to explore the full guide on screen.
   3. Offer up to three relevant follow-up questions at the very end under "### Suggested Follow-ups:".
-
-## Interactive Visual Enhancements
-- For procedural setup, installation, or multi-step configuration tasks, embed an interactive checklist JSON block using:
-\`\`\`checklist
-{
-  "productTitle": "<Product or Procedure Name>",
-  "steps": [
-    { "id": "step-1", "title": "<Short Step Title>", "detail": "<Actionable instruction>" }
-  ]
-}
-\`\`\`
-- For questions comparing versions or releases (e.g., ActOne 10.2 vs 10.1), embed a version comparison matrix JSON block using:
-\`\`\`matrix
-{
-  "product": "ActOne",
-  "oldVersion": "10.1",
-  "newVersion": "10.2",
-  "comparisons": [
-    { "feature": "<Subsystem or Feature>", "verOld": "<Old Behavior>", "verNew": "<New Behavior>", "status": "added"|"enhanced"|"deprecated" }
-  ]
-}
-\`\`\`
 `;
 
 const tools: FunctionDeclaration[] = [
@@ -158,6 +136,8 @@ const tools: FunctionDeclaration[] = [
 export interface AgentProgressEvent {
   type: 'status' | 'tool_start' | 'tool_progress' | 'tool_end' | 'answer_chunk' | 'complete' | 'error';
   message?: string;
+  spokenCue?: string;
+  cueAudioBase64?: string;
   toolCall?: {
     tool: string;
     args: Record<string, any>;
@@ -175,7 +155,8 @@ export interface AgentProgressEvent {
 export async function runActWiseAgent(
   userQuery: string,
   history: Array<{ role: 'user' | 'model'; text: string }> = [],
-  onProgress?: (event: AgentProgressEvent) => void
+  onProgress?: (event: AgentProgressEvent) => void,
+  requestedVoice: string = 'Aoede'
 ): Promise<{
   fullAnswer: string;
   spokenText: string;
@@ -186,9 +167,11 @@ export async function runActWiseAgent(
   const mcpCalls: McpToolCallResult[] = [];
   const citations: Array<{ title: string; url: string; bundle?: string; snippet?: string }> = [];
 
-  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-  const ai = new GoogleGenAI({ apiKey });
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash-exp', 'gemini-1.5-flash'];
+  const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
+  });
+  // Use currently supported models. (Note: gemini-2.5-flash is discontinued/404)
+  const modelsToTry = ['gemini-3.6-flash', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'];
 
   onProgress?.({
     type: 'status',
@@ -227,45 +210,12 @@ export async function runActWiseAgent(
         if (res) break;
       } catch (err: any) {
         lastError = err;
-        console.warn(`Model ${modelName} encountered error, trying next fallback:`, err.message?.slice(0, 120));
       }
     }
 
     if (!res) {
-      console.warn('AI model unavailable or key missing. Falling back to direct ActWise MCP portal search.');
-      const searchResult = await actwiseClient.callTool('search_docs', { query: userQuery });
-      mcpCalls.push(searchResult);
-
-      const results = searchResult.data?.results || [];
-      if (results.length > 0) {
-        const top = results[0];
-        for (const item of results) {
-          if (item.portal_url) {
-            citations.push({
-              title: item.title || 'NICE Actimize Documentation',
-              url: item.portal_url,
-              bundle: item.bundle,
-              snippet: item.snippet || item.shortDesc,
-            });
-          }
-        }
-        const cleanAnswer = `### ${top.title || 'Actimize Documentation'}\n\n${top.snippet || top.shortDesc || ''}\n\n*(Direct live grounding from NICE Actimize DOCenter portal)*`;
-        return {
-          fullAnswer: cleanAnswer,
-          spokenText: `According to official NICE Actimize documentation for ${top.title || 'Actimize'}: ${(top.snippet || '').slice(0, 180)}. Full details are on your screen.`,
-          citations,
-          followUps: ['What is ActOne?', 'How do I configure SAM?', 'Show ActOne installation steps'],
-          mcpCalls,
-        };
-      } else {
-        return {
-          fullAnswer: "I couldn't find matching information in the NICE Actimize documentation portal for your query.",
-          spokenText: "I couldn't find matching information in the Actimize docs portal.",
-          citations: [],
-          followUps: ['What is ActOne?', 'How do I ask ActWise?'],
-          mcpCalls,
-        };
-      }
+      console.warn(`AI model cascade unavailable (${lastError?.message}), falling back to direct DOCenter MCP search`);
+      return await fallbackDirectMcpSearch(userQuery, onProgress);
     }
 
     const candidate = res?.candidates?.[0];
@@ -286,11 +236,14 @@ export async function runActWiseAgent(
       const toolName = call.name;
       const toolArgs = (call.args as Record<string, any>) || {};
 
-      // Send status to user
+      // Send status & spoken cue to user
       const friendlyStatus = getFriendlyToolStatus(toolName, toolArgs);
+      const spokenCue = getSpokenToolCue(toolName, toolArgs);
+
       onProgress?.({
         type: 'tool_start',
         message: friendlyStatus,
+        spokenCue,
         toolCall: {
           tool: toolName,
           args: toolArgs,
@@ -386,7 +339,7 @@ async function callGeminiWithRetry(
   ai: GoogleGenAI,
   model: string,
   contents: any[],
-  maxRetries = 3
+  maxRetries = 2
 ): Promise<any> {
   let attempt = 0;
   while (attempt < maxRetries) {
@@ -403,11 +356,25 @@ async function callGeminiWithRetry(
       });
       return response;
     } catch (err: any) {
-      const isQuota = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota');
-      if (isQuota && attempt < maxRetries) {
-        // Exponential backoff
-        const delay = attempt * 1500;
-        await new Promise((resolve) => setTimeout(resolve, delay));
+      // If daily quota is exceeded (429 RESOURCE_EXHAUSTED) or model is 404, don't delay; fail fast to next candidate
+      const isExhausted =
+        err.status === 404 ||
+        err.message?.includes('RESOURCE_EXHAUSTED') ||
+        err.message?.includes('exceeded your current quota') ||
+        err.message?.includes('no longer available');
+      if (isExhausted) {
+        throw err;
+      }
+
+      const isTransient =
+        err.status === 429 ||
+        err.status === 503 ||
+        err.message?.includes('503') ||
+        err.message?.includes('high demand');
+
+      if (isTransient && attempt < maxRetries) {
+        // Quick backoff before 1 retry
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         continue;
       }
       throw err;
@@ -446,6 +413,44 @@ function getEngagementMessage(tool: string, args: Record<string, any>): string {
       return `Verifying product versions and aliases across 90+ Actimize offerings...`;
     default:
       return `Accessing ActWise documentation services...`;
+  }
+}
+
+export function getProductDisplayName(rawProd: string): string {
+  const p = (rawProd || '').toLowerCase().trim();
+  if (p.includes('actone')) return 'ActOne';
+  if (p.includes('sam') || p.includes('aml')) return 'AML SAM';
+  if (p.includes('cdd')) return 'Customer Due Diligence';
+  if (p.includes('ais')) return 'Analytics Intelligence Server';
+  if (p.includes('watch') || p.includes('wd')) return 'WatchDOG';
+  if (p.includes('rpa')) return 'Robotic Automation';
+  if (p.includes('ifm')) return 'Integrated Fraud Management';
+  if (p.includes('ecm')) return 'Enterprise Case Management';
+  if (p.includes('surv')) return 'Surveillance';
+  return rawProd.toUpperCase();
+}
+
+export function getSpokenToolCue(tool: string, args: Record<string, any>): string {
+  switch (tool) {
+    case 'search_docs': {
+      const prod = args.product ? getProductDisplayName(args.product) : '';
+      if (prod) {
+        return `Checking ${prod} documentation...`;
+      }
+      return `Searching NICE Actimize DOCenter...`;
+    }
+    case 'get_page':
+      return `Retrieving the full procedural guide...`;
+    case 'get_catalog':
+      return `Checking the Actimize product catalog...`;
+    case 'find_bundles':
+      return `Finding the relevant documentation bundle...`;
+    case 'list_docs':
+      return `Listing product documentation guides...`;
+    case 'get_toc':
+      return `Reading the documentation guide structure...`;
+    default:
+      return `Checking ActWise documentation...`;
   }
 }
 
@@ -527,3 +532,111 @@ function createSpokenVersion(markdownText: string): string {
 
   return spoken;
 }
+
+async function fallbackDirectMcpSearch(
+  userQuery: string,
+  onProgress?: (event: AgentProgressEvent) => void
+): Promise<{
+  fullAnswer: string;
+  spokenText: string;
+  citations: Array<{ title: string; url: string; bundle?: string; snippet?: string }>;
+  followUps: string[];
+  mcpCalls: McpToolCallResult[];
+}> {
+  onProgress?.({
+    type: 'tool_start',
+    message: `Searching NICE Actimize DOCenter directly for "${userQuery}"...`,
+    spokenCue: 'Checking documentation directly...',
+    toolCall: {
+      tool: 'search_docs',
+      args: { query: userQuery },
+    },
+  });
+
+  const mcpCalls: McpToolCallResult[] = [];
+  const citations: Array<{ title: string; url: string; bundle?: string; snippet?: string }> = [];
+
+  const searchRes = await actwiseClient.callTool('search_docs', { query: userQuery, max_results: 6 });
+  mcpCalls.push(searchRes);
+
+  const results = searchRes.data?.results || [];
+  for (const item of results) {
+    if (item.portal_url && !citations.some((c) => c.url === item.portal_url)) {
+      citations.push({
+        title: item.title || 'NICE Actimize Documentation',
+        url: item.portal_url,
+        bundle: item.bundle,
+        snippet: item.snippet || item.shortDesc,
+      });
+    }
+  }
+
+  onProgress?.({
+    type: 'tool_end',
+    message: `DOCenter search_docs: Found ${results.length} relevant documents`,
+    toolCall: {
+      tool: 'search_docs',
+      args: { query: userQuery },
+      durationMs: searchRes.durationMs,
+      data: searchRes.data,
+    },
+  });
+
+  let fullAnswer = '';
+  if (results.length > 0) {
+    const topDoc = results[0];
+    let pageContent = '';
+    if (topDoc.portal_url) {
+      onProgress?.({
+        type: 'tool_start',
+        message: `Retrieving procedural documentation for "${topDoc.title}"...`,
+        toolCall: {
+          tool: 'get_page',
+          args: { url: topDoc.portal_url },
+        },
+      });
+      const pageRes = await actwiseClient.callTool('get_page', { url: topDoc.portal_url, max_chars: 4000 });
+      mcpCalls.push(pageRes);
+      pageContent = pageRes.data?.markdown || '';
+      onProgress?.({
+        type: 'tool_end',
+        message: `Retrieved "${topDoc.title}" (${pageRes.durationMs}ms)`,
+      });
+    }
+
+    fullAnswer = `### ${topDoc.title}\n\n`;
+    if (pageContent) {
+      fullAnswer += `${pageContent}\n\n`;
+    } else if (topDoc.snippet) {
+      fullAnswer += `${topDoc.snippet}\n\n`;
+    }
+
+    if (results.length > 1) {
+      fullAnswer += `#### Related Documentation Resources\n`;
+      for (const other of results.slice(1, 5)) {
+        fullAnswer += `- **[${other.title}](${other.portal_url})** — ${other.snippet || other.bundle || ''}\n`;
+      }
+    }
+  } else {
+    fullAnswer = `I searched the NICE Actimize DOCenter for **"${userQuery}"**, but could not find an exact match in the current documentation guides. You can try refining your search or specifying an Actimize product like ActOne, AML SAM, or IFM.`;
+  }
+
+  const followUps = [
+    `How do I configure alert workflows in ActOne?`,
+    `What are the SAM detection tuning recommendations?`,
+    `Where can I find the latest API specifications?`,
+  ];
+  const spokenText =
+    results.length > 0
+      ? `I found the official documentation for ${results[0].title}. The procedural steps are displayed on your screen.`
+      : `I searched the Actimize DOCenter for ${userQuery}. Please check your screen for available product guides.`;
+
+  return {
+    fullAnswer,
+    spokenText,
+    citations,
+    followUps,
+    mcpCalls,
+  };
+}
+

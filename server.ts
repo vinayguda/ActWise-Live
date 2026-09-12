@@ -10,7 +10,7 @@ dotenv.config();
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -88,10 +88,10 @@ async function startServer() {
 
     try {
       const speech = await generateGeminiSpeech(text, voice || 'Aoede');
-      if (speech) {
+      if (speech?.audioBase64) {
         res.json(speech);
       } else {
-        res.status(500).json({ error: 'TTS generation unavailable' });
+        res.json({ audioBase64: null, quotaExhausted: !!speech?.quotaExhausted, error: 'TTS unavailable' });
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -99,71 +99,122 @@ async function startServer() {
   });
 
   // Live SSE streaming chat endpoint with real-time status and tool call telemetry
-  app.get('/api/chat/stream', async (req, res) => {
-    const query = req.query.q as string;
-    const historyJson = req.query.history as string;
-    const requestedVoice = (req.query.voice as string) || 'Aoede';
+  const handleChatStream = async (req: express.Request, res: express.Response) => {
+    const query = ((req.body?.q || req.query.q) as string) || '';
+    const historyParam = req.body?.history ?? req.query.history;
+    const requestedVoice = ((req.body?.voice || req.query.voice) as string) || 'Aoede';
 
-    if (!query) {
-      res.status(400).send('Query parameter "q" is required');
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      res.status(400).json({ error: 'Query parameter "q" is required' });
       return;
     }
 
     let history: Array<{ role: 'user' | 'model'; text: string }> = [];
-    if (historyJson) {
+    if (Array.isArray(historyParam)) {
+      history = historyParam;
+    } else if (typeof historyParam === 'string') {
       try {
-        history = JSON.parse(historyJson);
+        history = JSON.parse(historyParam);
       } catch {
         history = [];
       }
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    let clientDisconnected = false;
+    req.on('close', () => {
+      clientDisconnected = true;
+    });
+
     const sendEvent = (event: any) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (clientDisconnected || res.writableEnded) return;
+      try {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch (err) {
+        // stream write failed
+      }
     };
 
     try {
-      const finalResult = await runActWiseAgent(query, history, (evt) => {
-        sendEvent(evt);
-      });
+      const finalResult = await runActWiseAgent(
+        query,
+        history,
+        (evt) => {
+          sendEvent(evt);
+        },
+        requestedVoice
+      );
 
-      // Generate natural studio voice in background / immediately
-      let audioBase64: string | undefined;
-      if (finalResult.spokenText) {
-        sendEvent({
-          type: 'status',
-          message: 'Synthesizing natural voice...',
-        });
-        const speech = await generateGeminiSpeech(finalResult.spokenText, requestedVoice);
-        if (speech?.audioBase64) {
-          audioBase64 = speech.audioBase64;
-        }
-      }
+      if (clientDisconnected || res.writableEnded) return;
 
+      // 1. Send the text answer IMMEDIATELY so the client renders full formatted markdown and citations in under 1s
       sendEvent({
-        type: 'complete',
+        type: 'answer_ready',
         fullAnswer: finalResult.fullAnswer,
         spokenText: finalResult.spokenText,
-        audioBase64,
         citations: finalResult.citations,
         followUps: finalResult.followUps,
         mcpCalls: finalResult.mcpCalls,
       });
-      res.end();
+
+      // 2. Synthesize natural voice in parallel if spoken text exists
+      let audioBase64: string | undefined;
+      if (finalResult.spokenText && !clientDisconnected) {
+        sendEvent({
+          type: 'status',
+          message: 'Synthesizing voice...',
+        });
+        const speech = await generateGeminiSpeech(finalResult.spokenText, requestedVoice);
+        if (speech?.audioBase64) {
+          audioBase64 = speech.audioBase64;
+          sendEvent({
+            type: 'audio_ready',
+            audioBase64,
+            spokenText: finalResult.spokenText,
+            fallbackToBrowser: false,
+          });
+        } else {
+          sendEvent({
+            type: 'audio_ready',
+            audioBase64: null,
+            spokenText: finalResult.spokenText,
+            fallbackToBrowser: true,
+            quotaExhausted: !!speech?.quotaExhausted,
+          });
+        }
+      }
+
+      if (!clientDisconnected && !res.writableEnded) {
+        sendEvent({
+          type: 'complete',
+          fullAnswer: finalResult.fullAnswer,
+          spokenText: finalResult.spokenText,
+          audioBase64,
+          citations: finalResult.citations,
+          followUps: finalResult.followUps,
+          mcpCalls: finalResult.mcpCalls,
+        });
+        res.end();
+      }
     } catch (err: any) {
       console.error('SSE Stream error:', err);
-      sendEvent({
-        type: 'error',
-        message: err.message || 'An error occurred while querying documentation',
-      });
-      res.end();
+      if (!res.writableEnded && !clientDisconnected) {
+        sendEvent({
+          type: 'error',
+          message: err.message || 'An error occurred while querying documentation',
+        });
+        res.end();
+      }
     }
-  });
+  };
+
+  app.get('/api/chat/stream', handleChatStream);
+  app.post('/api/chat/stream', handleChatStream);
 
   // Vite middleware in dev, static files in production
   if (process.env.NODE_ENV !== 'production') {

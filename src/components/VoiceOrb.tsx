@@ -7,6 +7,11 @@ interface VoiceOrbProps {
   state: VoiceState;
   volume: number; // 0 to 100
   statusMessage?: string;
+  spokenCue?: string;
+  activeTool?: {
+    tool: string;
+    args: Record<string, any>;
+  };
   interimTranscript?: string;
   onToggleListening: () => void;
   onInterrupt: () => void;
@@ -16,6 +21,8 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({
   state,
   volume,
   statusMessage,
+  spokenCue,
+  activeTool,
   interimTranscript,
   onToggleListening,
   onInterrupt,
@@ -174,10 +181,20 @@ export const VoiceOrb: React.FC<VoiceOrbProps> = ({
               initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -5 }}
-              className="flex items-center gap-2 px-4 py-1.5 bg-cyan-950/70 border border-cyan-700/50 rounded-full text-cyan-200 text-xs font-medium backdrop-blur-sm"
+              className="flex flex-col items-center gap-1.5"
             >
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
-              <span>{statusMessage || 'Searching NICE Actimize DOCenter portal...'}</span>
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-cyan-950/80 border border-cyan-600/60 rounded-full text-cyan-200 text-xs font-medium backdrop-blur-md shadow-lg shadow-cyan-950/50">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
+                {activeTool && (
+                  <span className="px-1.5 py-0.2 bg-cyan-900 border border-cyan-700/60 rounded text-[10px] font-mono font-bold text-cyan-300 uppercase">
+                    {activeTool.tool}
+                  </span>
+                )}
+                <span>{spokenCue || statusMessage || 'Searching NICE Actimize DOCenter portal...'}</span>
+              </div>
+              <span className="text-[10px] text-cyan-400/70 font-mono">
+                Querying live DOCenter MCP • Tap orb to interrupt
+              </span>
             </motion.div>
           ) : isListening ? (
             <motion.div

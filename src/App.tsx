@@ -23,17 +23,19 @@ import { StatusIndicator } from './components/StatusIndicator';
 import { ChatMessage } from './components/ChatMessage';
 import { McpInspectorModal } from './components/McpInspectorModal';
 import { VoiceSettingsDrawer } from './components/VoiceSettingsDrawer';
+import { AmbientMusicToggle } from './components/AmbientMusicToggle';
+import { ambientMusicService } from './services/ambientMusic';
 import { SubmissionModal } from './components/SubmissionModal';
 import { Award } from 'lucide-react';
 
+
 const QUICK_PROMPTS = [
   { label: 'What is ActOne?', query: 'What is ActOne?' },
-  { label: 'ActOne Setup Checklist', query: 'What are the step-by-step setup and installation steps for ActOne 10.2?' },
-  { label: 'ActOne 10.2 vs 10.1 Matrix', query: 'Compare ActOne 10.2 and 10.1 capabilities and differences' },
   { label: 'How to import ActOne objects', query: 'How do I import new ActOne objects into ActOne?' },
   { label: 'What is DART?', query: 'What is DART in NICE Actimize?' },
   { label: 'AML SAM Alert Policies', query: 'How do I configure AML SAM alert policies?' },
   { label: 'What is AIS?', query: 'What is Analytics Intelligence Server (AIS)?' },
+  { label: 'About ActWise', query: 'Who are you and what information do you have?' },
 ];
 
 export default function App() {
@@ -66,6 +68,7 @@ export default function App() {
   const [micVolume, setMicVolume] = useState<number>(0);
   const [interimTranscript, setInterimTranscript] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [spokenCue, setSpokenCue] = useState<string>('');
   const [activeTool, setActiveTool] = useState<{ tool: string; args: Record<string, any> } | undefined>(undefined);
   const [activeMcpCalls, setActiveMcpCalls] = useState<McpCallRecord[]>([]);
 
@@ -75,9 +78,12 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSubmissionOpen, setIsSubmissionOpen] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const pendingMsgIdRef = useRef<string | null>(null);
+  const activeAbortRef = useRef<AbortController | null>(null);
 
   const [settings, setSettings] = useState<VoiceSettings>({
     autoSpeak: true,
+    audioCues: true,
     continuousConversation: true,
     speechRate: 1.05,
     ttsEngine: 'gemini',
@@ -85,6 +91,29 @@ export default function App() {
   });
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Initialize ambient music if enabled (browsers require a user interaction before AudioContext starts)
+  useEffect(() => {
+    if (ambientMusicService.isPlaying()) {
+      ambientMusicService.start();
+    }
+
+    const unlockAudio = () => {
+      if (ambientMusicService.isPlaying()) {
+        ambientMusicService.start();
+      }
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+  }, []);
 
   // Keyboard shortcut: Escape or Space to interrupt immediately
   useEffect(() => {
@@ -175,8 +204,21 @@ export default function App() {
     });
   };
 
+  // Auto-duck ambient background music when speaking or listening
+  useEffect(() => {
+    if (voiceState === 'speaking' || voiceState === 'listening') {
+      ambientMusicService.setDuck(true);
+    } else {
+      ambientMusicService.setDuck(false);
+    }
+  }, [voiceState]);
+
   // Handle interruption / barge-in
   const handleInterrupt = () => {
+    if (activeAbortRef.current) {
+      activeAbortRef.current.abort();
+      activeAbortRef.current = null;
+    }
     voiceService.stopSpeaking();
     setSpeakingMessageId(null);
     setVoiceState('idle');
@@ -186,8 +228,16 @@ export default function App() {
   const submitQuery = async (queryText: string) => {
     if (!queryText || queryText.trim().length === 0) return;
 
-    // Interrupt any ongoing speech
-    handleInterrupt();
+    // Abort any ongoing stream & stop speech
+    if (activeAbortRef.current) {
+      activeAbortRef.current.abort();
+      activeAbortRef.current = null;
+    }
+    voiceService.stopSpeaking();
+    setSpeakingMessageId(null);
+
+    const abortController = new AbortController();
+    activeAbortRef.current = abortController;
 
     const userMessageId = `user-${Date.now()}`;
     const userMessage: Message = {
@@ -201,7 +251,9 @@ export default function App() {
     setInputQuery('');
     setVoiceState('mcp_searching');
     setStatusMessage(`Connecting to ActWise DOCenter for "${queryText}"...`);
+    setSpokenCue('');
     setActiveMcpCalls([]);
+    pendingMsgIdRef.current = null;
 
     // Format history for agent
     const historyPayload = messages.slice(-6).map((m) => ({
@@ -209,85 +261,178 @@ export default function App() {
       text: m.content,
     }));
 
-    try {
-      // Connect to SSE stream endpoint with chosen natural voice
-      const eventSourceUrl = `/api/chat/stream?q=${encodeURIComponent(queryText)}&voice=${encodeURIComponent(
-        settings.geminiVoice
-      )}&history=${encodeURIComponent(JSON.stringify(historyPayload))}`;
-
-      const eventSource = new EventSource(eventSourceUrl);
-
-      eventSource.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-
-          if (data.type === 'status') {
-            setStatusMessage(data.message || 'Searching documentation...');
-          } else if (data.type === 'tool_start') {
-            setVoiceState('mcp_searching');
-            setStatusMessage(data.message || 'Querying DOCenter MCP...');
-            setActiveTool(data.toolCall);
-          } else if (data.type === 'tool_progress') {
-            setStatusMessage(data.message || 'Consulting NICE Actimize DOCenter...');
-          } else if (data.type === 'tool_end') {
-            setStatusMessage(data.message || 'Documentation retrieved');
-            if (data.toolCall) {
-              setActiveMcpCalls((prev) => [...prev, data.toolCall]);
-            }
-          } else if (data.type === 'complete') {
-            eventSource.close();
-            const assistantMessageId = `assistant-${Date.now()}`;
-            const assistantMessage: Message = {
-              id: assistantMessageId,
-              role: 'assistant',
-              content: data.fullAnswer || "I couldn't find relevant documentation for that query.",
-              spokenText: data.spokenText,
-              audioBase64: data.audioBase64,
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              citations: data.citations || [],
-              followUps: data.followUps || [],
-              mcpCalls: data.mcpCalls || [],
-            };
-
-            setMessages((prev) => [...prev, assistantMessage]);
-            setStatusMessage('');
-            setActiveTool(undefined);
-
-            // Trigger Voice response if autoSpeak is enabled
-            if (settings.autoSpeak && data.spokenText) {
-              executeVoicePlayback(data.spokenText, assistantMessageId, data.audioBase64);
-            } else {
-              setVoiceState('idle');
-            }
-          } else if (data.type === 'error') {
-            eventSource.close();
-            setVoiceState('idle');
-            setStatusMessage('');
-            setActiveTool(undefined);
-            const errorMessage: Message = {
-              id: `error-${Date.now()}`,
-              role: 'assistant',
-              content: `I couldn't reach the documentation service right now. Please try again in a moment.`,
-              spokenText: "I couldn't reach the documentation service right now. Please try again in a moment.",
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            };
-            setMessages((prev) => [...prev, errorMessage]);
-          }
-        } catch (err) {
-          console.error('Failed to parse SSE event', err);
+    const processStreamEvent = (data: any) => {
+      if (data.type === 'status') {
+        setStatusMessage(data.message || 'Searching documentation...');
+      } else if (data.type === 'tool_start') {
+        setVoiceState('mcp_searching');
+        setStatusMessage(data.message || 'Querying DOCenter MCP...');
+        setActiveTool(data.toolCall);
+        if (data.spokenCue) {
+          setSpokenCue(data.spokenCue);
         }
-      };
 
-      eventSource.onerror = (e) => {
-        console.error('SSE connection error', e);
-        eventSource.close();
+        // Trigger acoustic chime or natural studio voice announcement
+        if (settings.audioCues) {
+          if (data.cueAudioBase64 && settings.autoSpeak) {
+            voiceService.playNaturalVoice(data.cueAudioBase64, {
+              rate: settings.speechRate,
+              onVolumeChange: (vol) => setMicVolume(vol),
+            });
+          } else {
+            voiceService.playAudioChime('cue');
+          }
+        }
+      } else if (data.type === 'tool_progress') {
+        setStatusMessage(data.message || 'Consulting NICE Actimize DOCenter...');
+      } else if (data.type === 'tool_end') {
+        if (settings.audioCues) {
+          voiceService.playAudioChime('tool_end');
+        }
+        setStatusMessage(data.message || 'Documentation retrieved');
+        if (data.toolCall) {
+          setActiveMcpCalls((prev) => [...prev, data.toolCall]);
+        }
+      } else if (data.type === 'answer_ready') {
+        if (settings.audioCues) {
+          voiceService.playAudioChime('answer');
+        }
+        const assistantMessageId = `assistant-${Date.now()}`;
+        pendingMsgIdRef.current = assistantMessageId;
+        const assistantMessage: Message = {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: data.fullAnswer || "I couldn't find relevant documentation for that query.",
+          spokenText: data.spokenText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          citations: data.citations || [],
+          followUps: data.followUps || [],
+          mcpCalls: data.mcpCalls || [],
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+        setStatusMessage('');
+        setSpokenCue('');
+        setActiveTool(undefined);
+
+        if (settings.autoSpeak && settings.ttsEngine === 'browser' && data.spokenText) {
+          executeVoicePlayback(data.spokenText, assistantMessageId);
+        } else if (settings.autoSpeak && data.spokenText) {
+          setVoiceState('processing');
+        } else {
+          setVoiceState('idle');
+        }
+      } else if (data.type === 'audio_ready') {
+        const targetId = pendingMsgIdRef.current;
+        if (targetId && data.audioBase64) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === targetId ? { ...m, audioBase64: data.audioBase64 } : m))
+          );
+        }
+        if (settings.autoSpeak && data.spokenText) {
+          executeVoicePlayback(data.spokenText, targetId || 'latest', data.audioBase64 || undefined);
+        } else if (!settings.autoSpeak) {
+          setVoiceState('idle');
+        }
+      } else if (data.type === 'complete') {
+        setStatusMessage('');
+        setSpokenCue('');
+        setActiveTool(undefined);
+        if (!settings.autoSpeak && voiceState !== 'listening') {
+          setVoiceState('idle');
+        }
+      } else if (data.type === 'error') {
         setVoiceState('idle');
         setStatusMessage('');
-      };
+        setSpokenCue('');
+        setActiveTool(undefined);
+        const errorMessage: Message = {
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: data.message || `I couldn't reach the documentation service right now. Please try again in a moment.`,
+          spokenText: "I couldn't reach the documentation service right now. Please try again in a moment.",
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      }
+    };
+
+    try {
+      const response = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          q: queryText,
+          voice: settings.geminiVoice,
+          history: historyPayload,
+        }),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        let errText = '';
+        try {
+          const errObj = await response.json();
+          errText = errObj.error || errObj.message || '';
+        } catch {}
+        throw new Error(errText || `Server responded with HTTP ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No readable stream received from server');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const jsonStr = trimmed.slice(5).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const data = JSON.parse(jsonStr);
+            processStreamEvent(data);
+          } catch {
+            // Ignore incomplete partial frames
+          }
+        }
+      }
     } catch (err: any) {
-      console.error('Query submission error', err);
+      if (err.name === 'AbortError') {
+        // Interrupted cleanly by user
+        return;
+      }
+      console.warn('Chat stream network error:', err.message || err);
       setVoiceState('idle');
       setStatusMessage('');
+      setSpokenCue('');
+      setActiveTool(undefined);
+
+      const errorMessage: Message = {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: `I encountered a momentary connection issue. Please try asking again.`,
+        spokenText: "I encountered a connection issue. Please try asking again.",
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      if (activeAbortRef.current === abortController) {
+        activeAbortRef.current = null;
+      }
     }
   };
 
@@ -398,6 +543,9 @@ export default function App() {
 
         {/* Status badges & Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Ambient Background Music Toggle */}
+          <AmbientMusicToggle />
+
           {/* MCP Health Indicator */}
           <button
             onClick={() => setIsInspectorOpen(true)}
@@ -453,6 +601,8 @@ export default function App() {
             state={voiceState}
             volume={micVolume}
             statusMessage={statusMessage}
+            spokenCue={spokenCue}
+            activeTool={activeTool}
             interimTranscript={interimTranscript}
             onToggleListening={handleToggleListening}
             onInterrupt={handleInterrupt}
@@ -461,6 +611,7 @@ export default function App() {
           {/* Status Indicator for MCP calls */}
           <StatusIndicator
             statusText={statusMessage}
+            spokenCue={spokenCue}
             activeTool={activeTool}
             mcpCalls={activeMcpCalls}
             isSearching={voiceState === 'mcp_searching'}

@@ -43,6 +43,7 @@ export interface McpHealthInfo {
 
 export interface VoiceSettings {
   autoSpeak: boolean;
+  audioCues: boolean; // Acoustic and spoken cues during tool calling
   continuousConversation: boolean;
   speechRate: number;
   ttsEngine: 'gemini' | 'browser';
