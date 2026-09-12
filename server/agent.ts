@@ -232,7 +232,40 @@ export async function runActWiseAgent(
     }
 
     if (!res) {
-      throw new Error(`AI model error: ${lastError?.message || 'Could not connect to AI model'}`);
+      console.warn('AI model unavailable or key missing. Falling back to direct ActWise MCP portal search.');
+      const searchResult = await actwiseClient.callTool('search_docs', { query: userQuery });
+      mcpCalls.push(searchResult);
+
+      const results = searchResult.data?.results || [];
+      if (results.length > 0) {
+        const top = results[0];
+        for (const item of results) {
+          if (item.portal_url) {
+            citations.push({
+              title: item.title || 'NICE Actimize Documentation',
+              url: item.portal_url,
+              bundle: item.bundle,
+              snippet: item.snippet || item.shortDesc,
+            });
+          }
+        }
+        const cleanAnswer = `### ${top.title || 'Actimize Documentation'}\n\n${top.snippet || top.shortDesc || ''}\n\n*(Direct live grounding from NICE Actimize DOCenter portal)*`;
+        return {
+          fullAnswer: cleanAnswer,
+          spokenText: `According to official NICE Actimize documentation for ${top.title || 'Actimize'}: ${(top.snippet || '').slice(0, 180)}. Full details are on your screen.`,
+          citations,
+          followUps: ['What is ActOne?', 'How do I configure SAM?', 'Show ActOne installation steps'],
+          mcpCalls,
+        };
+      } else {
+        return {
+          fullAnswer: "I couldn't find matching information in the NICE Actimize documentation portal for your query.",
+          spokenText: "I couldn't find matching information in the Actimize docs portal.",
+          citations: [],
+          followUps: ['What is ActOne?', 'How do I ask ActWise?'],
+          mcpCalls,
+        };
+      }
     }
 
     const candidate = res?.candidates?.[0];
