@@ -54,6 +54,28 @@ Copy portal_url exactly. Never modify or invent URLs.
   1. The written response on screen should be thorough and complete with step-by-step procedures, technical details, code snippets, and exact markdown links [Title](url).
   2. The spoken response will be converted to real human voice audio. Keep the spoken summary quick (1 to 2 punchy, friendly sentences) and invite the user to explore the full guide on screen.
   3. Offer up to three relevant follow-up questions at the very end under "### Suggested Follow-ups:".
+
+## Interactive Visual Enhancements
+- For procedural setup, installation, or multi-step configuration tasks, embed an interactive checklist JSON block using:
+```checklist
+{
+  "productTitle": "<Product or Procedure Name>",
+  "steps": [
+    { "id": "step-1", "title": "<Short Step Title>", "detail": "<Actionable instruction>" }
+  ]
+}
+```
+- For questions comparing versions or releases (e.g., ActOne 10.2 vs 10.1), embed a version comparison matrix JSON block using:
+```matrix
+{
+  "product": "ActOne",
+  "oldVersion": "10.1",
+  "newVersion": "10.2",
+  "comparisons": [
+    { "feature": "<Subsystem or Feature>", "verOld": "<Old Behavior>", "verNew": "<New Behavior>", "status": "added"|"enhanced"|"deprecated" }
+  ]
+}
+```
 `;
 
 const tools: FunctionDeclaration[] = [

@@ -28,11 +28,12 @@ import { Award } from 'lucide-react';
 
 const QUICK_PROMPTS = [
   { label: 'What is ActOne?', query: 'What is ActOne?' },
+  { label: 'ActOne Setup Checklist', query: 'What are the step-by-step setup and installation steps for ActOne 10.2?' },
+  { label: 'ActOne 10.2 vs 10.1 Matrix', query: 'Compare ActOne 10.2 and 10.1 capabilities and differences' },
   { label: 'How to import ActOne objects', query: 'How do I import new ActOne objects into ActOne?' },
   { label: 'What is DART?', query: 'What is DART in NICE Actimize?' },
   { label: 'AML SAM Alert Policies', query: 'How do I configure AML SAM alert policies?' },
   { label: 'What is AIS?', query: 'What is Analytics Intelligence Server (AIS)?' },
-  { label: 'About ActWise', query: 'Who are you and what information do you have?' },
 ];
 
 export default function App() {
