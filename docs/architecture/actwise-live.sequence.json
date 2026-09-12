@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "ActWise Live — Voice & MCP Grounding Sequence",
+    "quality_profile": "showcase",
+    "viewBox": [860, 880],
+    "animation": "trace",
+    "views": [
+      {
+        "id": "full-flow",
+        "label": "End-to-End Voice Roundtrip",
+        "focus": ["user", "ui", "server", "gemini", "mcp", "actimize"],
+        "note": "Complete request lifecycle from speech input to MCP tool execution and streaming response."
+      },
+      {
+        "id": "mcp-execution",
+        "label": "Zero-Hallucination Tool Call",
+        "focus": ["server", "gemini", "mcp", "actimize"],
+        "note": "Model Context Protocol tool invocation and verification against NICE Actimize portals."
+      }
+    ]
+  },
+  "participants": [
+    { "id": "user", "type": "external", "label": "Analyst", "sublabel": "voice / touch" },
+    { "id": "ui", "type": "frontend", "label": "Voice Orb", "sublabel": "React 19 UI" },
+    { "id": "server", "type": "backend", "label": "Express Core", "sublabel": "Cloud Run" },
+    { "id": "gemini", "type": "cloud", "label": "Gemini 2.0", "sublabel": "Multimodal Live" },
+    { "id": "mcp", "type": "backend", "label": "DOCenter MCP", "sublabel": "JSON-RPC Server" },
+    { "id": "actimize", "type": "external", "label": "NICE Actimize", "sublabel": "Portal Docs" }
+  ],
+  "segments": [
+    { "from": 150, "to": 242, "label": "1. Ingestion" },
+    { "from": 262, "to": 482, "label": "2. MCP Tool Grounding" },
+    { "from": 502, "to": 720, "label": "3. Voice & Widget Streaming" }
+  ],
+  "messages": [
+    { "from": "user", "to": "ui", "y": 180, "label": "Speak query (\"ActOne 10.2 setup\")", "variant": "emphasis" },
+    { "from": "ui", "to": "server", "y": 222, "label": "SSE audio stream", "variant": "emphasis" },
+    { "from": "server", "to": "gemini", "y": 282, "label": "Route prompt + tools", "variant": "default" },
+    { "from": "gemini", "to": "server", "y": 324, "label": "FunctionCall: search_docs", "variant": "return" },
+    { "from": "server", "to": "mcp", "y": 366, "label": "JSON-RPC search_docs", "variant": "emphasis" },
+    { "from": "mcp", "to": "actimize", "y": 408, "label": "Query DOCenter indices", "variant": "default" },
+    { "from": "actimize", "to": "mcp", "y": 450, "label": "Verified procedural chunks", "variant": "return" },
+    { "from": "mcp", "to": "server", "y": 492, "label": "Doc chunks + URL citations", "variant": "return" },
+    { "from": "server", "to": "gemini", "y": 534, "label": "ToolResult payload", "variant": "default" },
+    { "from": "gemini", "to": "server", "y": 576, "label": "Executive summary + Markdown", "variant": "return" },
+    { "from": "server", "to": "ui", "y": 628, "label": "Stream Aoede voice + checklist JSON", "variant": "emphasis" },
+    { "from": "ui", "to": "user", "y": 670, "label": "Play voice + render <InstallationChecklist />", "variant": "emphasis" }
+  ],
+  "activations": [
+    { "participant": "ui", "from": 174, "to": 228, "type": "frontend" },
+    { "participant": "server", "from": 216, "to": 634, "type": "backend" },
+    { "participant": "gemini", "from": 276, "to": 330, "type": "cloud" },
+    { "participant": "mcp", "from": 360, "to": 498, "type": "backend" },
+    { "participant": "actimize", "from": 402, "to": 456, "type": "external" },
+    { "participant": "gemini", "from": 528, "to": 582, "type": "cloud" },
+    { "participant": "ui", "from": 622, "to": 676, "type": "frontend" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Sub-Second Ingestion",
+      "items": [
+        "Real-time audio streaming with barge-in support",
+        "Executive voice persona speaks 1-2 sentence summaries out loud"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Strict Protocol Verification",
+      "items": [
+        "Mandatory tool_call execution before answering",
+        "Zero hallucination: answers only from verified Actimize documentation"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Reactive UI Rendering",
+      "items": [
+        "Transforms procedure chunks into clickable <InstallationChecklist />",
+        "Embeds verified official portal links directly in message cards"
+      ]
+    }
+  ]
+}

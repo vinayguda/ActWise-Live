@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "ActWise Live — System Architecture",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 640],
+    "views": [
+      {
+        "id": "full-flow",
+        "label": "End-to-End Ambient Flow",
+        "focus": ["users", "webapp", "extension", "ingress", "server", "gemini", "tts", "mcp", "actimize"],
+        "note": "Complete request flow from ambient user interaction to MCP grounding and Gemini voice response."
+      },
+      {
+        "id": "mcp-grounding",
+        "label": "MCP Grounding Layer",
+        "focus": ["server", "mcp", "actimize"],
+        "note": "Zero-hallucination documentation grounding via Model Context Protocol tools."
+      },
+      {
+        "id": "voice-pipeline",
+        "label": "Gemini Live Voice Pipeline",
+        "focus": ["users", "webapp", "server", "gemini", "tts"],
+        "note": "Sub-second multimodal voice synthesis and dual-mode executive responses."
+      }
+    ]
+  },
+  "components": [
+    { "id": "users", "type": "external", "label": "Compliance Team", "sublabel": "AML / Fincrime Analyst", "pos": [40, 250], "size": [136, 68] },
+    { "id": "extension", "type": "frontend", "label": "Chrome Sidecar", "sublabel": "ActWise Anywhere", "pos": [240, 110], "size": [138, 68], "tag": "Manifest V3" },
+    { "id": "webapp", "type": "frontend", "label": "Web Application", "sublabel": "React 19 + Voice Orb", "brand": "react", "pos": [240, 250], "size": [138, 68] },
+    { "id": "ingress", "type": "cloud", "label": "Cloud Run Ingress", "sublabel": "Google Cloud Run", "brand": "google-cloud", "pos": [440, 250], "size": [138, 68] },
+    { "id": "server", "type": "backend", "label": "Express Runtime", "sublabel": "Streaming Agent Core", "pos": [640, 250], "size": [138, 68] },
+    { "id": "gemini", "type": "cloud", "label": "Gemini 2.0 Flash", "sublabel": "Multimodal Live Engine", "brand": "google-gemini", "pos": [840, 110], "size": [138, 68] },
+    { "id": "tts", "type": "cloud", "label": "Aoede TTS Engine", "sublabel": "Executive Voice Persona", "brand": "google-gemini", "pos": [840, 250], "size": [138, 68] },
+    { "id": "mcp", "type": "backend", "label": "DOCenter MCP", "sublabel": "JSON-RPC Tool Server", "pos": [640, 420], "size": [138, 68] },
+    { "id": "actimize", "type": "external", "label": "NICE Actimize", "sublabel": "Official DOCenter Portal", "pos": [840, 420], "size": [138, 68] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Google Cloud Run Production Boundary", "wraps": ["ingress", "server", "mcp"] }
+  ],
+  "connections": [
+    { "id": "user-voice", "from": "users", "to": "webapp", "label": "Voice / Touch", "variant": "emphasis", "labelDy": -28 },
+    { "id": "user-highlight", "from": "users", "to": "extension", "label": "Highlight code", "fromSide": "top", "toSide": "left" },
+    { "id": "ext-query", "from": "extension", "to": "ingress", "label": "Context query", "variant": "dashed", "fromSide": "right", "toSide": "top", "via": [[395, 144], [509, 144]] },
+    { "id": "web-stream", "from": "webapp", "to": "ingress", "label": "SSE / Audio", "variant": "emphasis", "labelDy": 35 },
+    { "id": "ing-proxy", "from": "ingress", "to": "server" },
+    { "id": "srv-gemini", "from": "server", "to": "gemini", "label": "Prompt router", "fromSide": "top", "toSide": "left", "via": [[709, 144], [820, 144]] },
+    { "id": "srv-tts", "from": "server", "to": "tts", "label": "Executive voice", "labelDy": -28 },
+    { "id": "srv-mcp", "from": "server", "to": "mcp", "label": "search_docs", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelAt": [760, 369] },
+    { "id": "mcp-portal", "from": "mcp", "to": "actimize", "label": "HTTPS API", "variant": "emphasis", "labelDy": -28 }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ambient Edge Experience",
+      "items": [
+        "React 19 with Voice Orb and interactive checklists",
+        "Manifest V3 Chrome Extension sidecar for in-context analysis"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Strict MCP Grounding",
+      "items": [
+        "Direct JSON-RPC bridge to ActWise DOCenter MCP server",
+        "Mandatory citation verification to eliminate hallucinations"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Google Cloud Run & Gemini",
+      "items": [
+        "Gemini 2.0 Flash sub-second prompt routing and Aoede speech",
+        "Elastic containerized autoscaling on Google Cloud Run"
+      ]
+    }
+  ]
+}
